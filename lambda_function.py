@@ -7,8 +7,6 @@ print('Loading function')
 
 s3 = boto3.resource('s3')
 
-trump_factor = 5
-
 def clean_text(text):
     currently_good = True
     clean_text = ''
@@ -17,22 +15,12 @@ def clean_text(text):
             currently_good = False
         elif letter == '>':
             currently_good = True
+        # treating each of these characters as their own word by putting a space before them
         elif currently_good and letter in {'?', '.', '!', ',', '--'}:
             clean_text += (" " + letter)
         elif currently_good:
             clean_text += letter
     return clean_text
-
-def get_dictionary(text):
-    dictionary = {}
-    starting_words = {}
-    #print(words)
-    for i,word in enumerate(text):
-        currentCount = dictionary.get(word)
-        dictionary[word] = (currentCount or 0) + 1
-        if i != 0 and text[i] == '.':
-            starting_words = (starting_words.get(word) or 0) + 1
-    return dictionary, starting_words
 
 def get_likely_next_words(previous_word, current_word, transcript):
     likely_next_words = {}
@@ -44,20 +32,21 @@ def get_likely_next_words(previous_word, current_word, transcript):
             likely_next_words[next_word] = (currentCount or 0) + 1
             if i > 0 and transcript[i - 1] == previous_word:
                 more_likely_next_words[next_word] = (currentCount or 0) + 1
-    print(likely_next_words)
-    print(more_likely_next_words)
+    # print(likely_next_words)
+    # print(more_likely_next_words)
     return likely_next_words, more_likely_next_words
 
 def get_speeches(speaker):
     my_bucket = s3.Bucket('user-transcripts')
     files = list(my_bucket.objects.filter(Prefix=speaker))
     body = ''
+    #Rathern than read in all speeches, I arbitrarily selected a subset for performance reasons
     for file in files[5:25]:
         retrieved_file = file.get()
         body += retrieved_file['Body'].read().decode('utf-8')
     return body
 
-def prune_word_choice(possible_next_words, probable_next_words):
+def assess_next_words(possible_next_words, probable_next_words, trump_factor):
     likely_next_words = {}
     total_probability = 0
     for word in possible_next_words:
@@ -67,20 +56,17 @@ def prune_word_choice(possible_next_words, probable_next_words):
     return likely_next_words, total_probability
 
 
-
 def lambda_handler(event, context):
     body = get_speeches(event['speaker'])
+    trump_factor = event['trump_factor']
     words = clean_text(body).replace("  ", " ").split(" ")
-    #print(words)
-    #word_count = get_dictionary(words)
-    # print(len(word_count))
     current_word = words[int(random.random() * len(words))]
     previous_word = ''
     sentance = current_word
 
     while current_word not in {'.', '!', '?','*APPLAUSE*'}:
         possible_next_words, probable_next_words = get_likely_next_words(previous_word,current_word, words)
-        likely_next_words, total_probability = prune_word_choice(possible_next_words, probable_next_words)
+        likely_next_words, total_probability = assess_next_words(possible_next_words, probable_next_words, trump_factor)
         if len(likely_next_words) == 0:
             print("dead end")
             break
@@ -94,5 +80,5 @@ def lambda_handler(event, context):
                 current_word = word
                 break
             patience += likely_next_words[word]
-            print("patience/total_probability," + str(patience/total_probability) + "\n tolerance:" + str(tolerance))
+            #print("patience/total_probability," + str(patience/total_probability) + "\n tolerance:" + str(tolerance))
     return sentance
